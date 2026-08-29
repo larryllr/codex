@@ -12,6 +12,9 @@ const DEFERRED_NESTED_TOOLS_GUIDANCE: &str = r#"Some deferred nested tools may b
 To find one, filter `ALL_TOOLS` by `name` and `description`."#;
 const LEGACY_IMAGE_HELPER_DESCRIPTION: &str = r#"`image(imageUrlOrItem: string | { image_url: string; detail?: "auto" | "low" | "high" | "original" | null } | ImageContent, detail?: "auto" | "low" | "high" | "original" | null)`: Appends an image item. `image_url` should be a base64-encoded `data:` URL. To forward an MCP tool image, pass an individual `ImageContent` block from `result.content`, for example `image(result.content[0])`. MCP image blocks may request detail with `_meta: { "codex/imageDetail": "original" }`. When provided, the second `detail` argument overrides any detail embedded in the first argument."#;
 const UNIFIED_IMAGE_HELPER_DESCRIPTION: &str = r#"`image(imageUrlOrItem: string | { image_url: string } | ImageContent)`: Appends an image item. `image_url` should be a base64-encoded `data:` URL. To forward an MCP tool image, pass an individual `ImageContent` block from `result.content`, for example `image(result.content[0])`."#;
+const CODE_MODE_SCHEDULING_GUIDANCE: &str = r#"- When multiple nested tool calls for the current stage are already known to be independent, read-only, and conflict-free, issue them from one `exec` and await them together with `Promise.all(...)` or `Promise.allSettled(...)`.
+- Use `Promise.allSettled(...)` when partial results remain useful and inspect every settled result; use `Promise.all(...)` only when any failure should abort the batch. Keep dependent, state-changing, approval-sensitive, adaptive, and waiting operations sequential. Do not poll a running process at short fixed intervals; use a wait window appropriate to its expected duration. Do not repeat completed checks.
+"#;
 const EXEC_DESCRIPTION_TEMPLATE: &str = r#"Run JavaScript code to orchestrate/compose tool calls
 - Evaluates the provided JavaScript code in a fresh V8 isolate as an async module.
 - All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers, for example `await tools.mcp__ologs__get_profile(...)`.
@@ -283,6 +286,7 @@ pub fn build_exec_tool_description(
     if !code_mode_only {
         return sections.join("\n\n");
     }
+    sections.push(CODE_MODE_SCHEDULING_GUIDANCE.to_string());
 
     let has_mcp_tools = enabled_tools
         .iter()
@@ -730,6 +734,38 @@ bar"
         assert!(description.contains("`audio(audioUrlOrItem:"));
         assert!(description.contains("`setTimeout(callback: () => void, delayMs?: number)`"));
         assert!(description.contains("`clearTimeout(timeoutId?: number)`"));
+    }
+
+    #[test]
+    fn code_mode_only_description_includes_scheduling_boundaries() {
+        let code_mode_description = build_exec_tool_description(
+            &[],
+            &[],
+            &BTreeMap::new(),
+            crate::DEFAULT_EXEC_YIELD_TIME_MS,
+            /*code_mode_only*/ true,
+            ImageDetailVisibility::Visible,
+        );
+        let regular_description = build_exec_tool_description(
+            &[],
+            &[],
+            &BTreeMap::new(),
+            crate::DEFAULT_EXEC_YIELD_TIME_MS,
+            /*code_mode_only*/ false,
+            ImageDetailVisibility::Visible,
+        );
+
+        assert!(
+            code_mode_description.contains("Promise.all(...)")
+                && code_mode_description.contains("Promise.allSettled(...)")
+                && code_mode_description.contains("inspect every settled result")
+                && code_mode_description.contains("Keep dependent, state-changing")
+        );
+        assert!(
+            !regular_description.contains("Promise.all(...)")
+                && !regular_description.contains("Promise.allSettled(...)")
+                && !regular_description.contains("inspect every settled result")
+        );
     }
 
     #[test]
